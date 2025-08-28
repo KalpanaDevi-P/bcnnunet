@@ -1,0 +1,215 @@
+<!--<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tumor Segmentation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <style>
+        body {
+    margin: 0;
+    padding: 0;
+    background: url("{{ url_for('static', filename='bg.jpg') }}") no-repeat center center fixed !important;
+    background-size: cover !important;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            text-align: center;
+        }
+        
+        .images {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .img-box {
+            
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        img {
+            max-width: 300px;
+            border-radius: 8px;
+        }
+        .info {
+            margin-top: 30px;
+            font-size: 18px;
+        }
+        .info span {
+            font-weight: bold;
+            color: #007acc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+    <h1 style:color="White">Brain Tumor Segmentation Results</h2>
+
+    <div class="images">
+        <div class="img-box">
+            <h3>Original Image</h3>
+            <img src="{{ image_path }}" alt="Original MRI">
+        </div>
+        {% if mask_path %}
+        <div class="img-box">
+            <h3>Tumor Mask</h3>
+            <img src="{{ mask_path }}" alt="Tumor Mask">
+        </div>
+        {% endif %}
+        {% if heatmap_path %}
+        <div class="img-box">
+            <h3>Heatmap Overlay</h3>
+            <img src="{{ heatmap_path }}" alt="Heatmap">
+        </div>
+        {% endif %}
+        {% if bbox_path %}
+        <div class="img-box">
+            <h3>Bounding Box</h3>
+            <img src="{{ bbox_path }}" alt="Bounding Box">
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="info">
+        <p>Tumor Size: <span>{{ tumor_size }}</span> pixels</p>
+        <p>Tumor Area Percentage: <span>{{ tumor_percentage }}%</span></p>
+        {% if tumor_location %}
+        <p><strong>Tumor Location:</strong> {{ tumor_location }}</p>
+        {% endif %}
+    </div>
+    <div class="actions">
+    
+    <a href="{{ url_for('upload') }}">Upload Another Image</a>
+
+    
+    <form method="GET" action="{{ url_for('download_report') }}" style="display:inline;">
+        <button type="submit">Download Report (PDF)</button>
+    </form>
+</div>
+</div>
+</body>
+</html>
+
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tumor Segmentation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: url("{{ url_for('static', filename='bg.jpg') }}") no-repeat center center fixed !important;
+            background-size: cover !important;
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        .images {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .img-box {
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        img {
+            max-width: 300px;
+            border-radius: 8px;
+        }
+        .info {
+            margin-top: 30px;
+            font-size: 18px;
+        }
+        .info span {
+            font-weight: bold;
+            color: #007acc;
+        }
+        .no-tumor {
+            margin-top: 50px;
+            font-size: 22px;
+            color: red;
+            font-weight: bold;
+        }
+        .actions {
+            margin-top: 30px;
+        }
+        .actions a, .actions button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            background: #007acc;
+            color: white;
+            text-decoration: none;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .actions button:hover, .actions a:hover {
+            background: #005f99;
+        }
+    </style>
+</head>
+<body class="segmentation-page">
+    <div class="container">
+        <h1 style="color:white;">Brain Tumor Segmentation Results</h1>
+
+        {% if no_tumor %}
+            <div class="no-tumor">No tumor detected.</div>
+        {% else %}
+            <div class="images">
+                <div class="img-box">
+                    <h3>Original Image</h3>
+                    <img src="{{ image_path }}" alt="Original MRI">
+                </div>
+                {% if mask_path %}
+                <div class="img-box">
+                    <h3>Tumor Mask</h3>
+                    <img src="{{ mask_path }}" alt="Tumor Mask">
+                </div>
+                {% endif %}
+                {% if heatmap_path %}
+                <div class="img-box">
+                    <h3>Heatmap Overlay</h3>
+                    <img src="{{ heatmap_path }}" alt="Heatmap">
+                </div>
+                {% endif %}
+                {% if bbox_path %}
+                <div class="img-box">
+                    <h3>Bounding Box</h3>
+                    <img src="{{ bbox_path }}" alt="Bounding Box">
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="info">
+                <p>Tumor Size: <span>{{ tumor_size }}</span> pixels</p>
+                <p>Tumor Area Percentage: <span>{{ tumor_percentage }}%</span></p>
+                {% if tumor_location %}
+                <p><strong>Tumor Location:</strong> {{ tumor_location }}</p>
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <div class="actions">
+            <a href="{{ url_for('upload') }}">Upload Another Image</a>
+            <form method="GET" action="{{ url_for('download_report') }}" style="display:inline;">
+                <button type="submit">Download Report (PDF)</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+
+

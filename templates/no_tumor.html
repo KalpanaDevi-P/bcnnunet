@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>No Tumor Detected</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>No Tumor Detected</h1>
+        <p>The brain scan appears normal. No tumor was detected.</p>
+
+        <img src="{{ image_path }}" alt="Uploaded Scan" width="300">
+
+        <div class="actions" style="margin-top: 20px;">
+            <a href="{{ url_for('upload') }}">
+                <button>Upload New Image</button>
+            </a>
+
+            <a href="{{ url_for('download_report') }}">
+                <button>Download Report</button>
+            </a>
+        </div>
+    </div>
+</body>
+</html>

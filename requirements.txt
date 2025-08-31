@@ -1,10 +1,6 @@
-flask==2.3.3
-tensorflow-cpu==2.12.0
-torch==2.0.1
-torchvision==0.15.2
-pillow==9.5.0
-numpy==1.23.5
-opencv-python-headless==4.8.0.74
-fpdf==1.7.2
-requests==2.31.0
-gunicorn==20.1.0
+Flask==3.1.0
+requests==2.32.3
+Pillow==10.3.0
+matplotlib==3.9.2
+numpy==1.26.4
+gunicorn==23.0.0

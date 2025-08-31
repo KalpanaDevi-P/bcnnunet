@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Result - Brain Tumor Analyzer</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 24px auto; }
+    .btn { padding: 8px 14px; border-radius:6px; background:#0078d4; color:white; border:none; cursor:pointer; }
+    .card { border:1px solid #eee; padding:12px; border-radius:8px; }
+  </style>
+</head>
+<body>
+  <h1>Analysis Result</h1>
+
+  <div class="card">
+    <h3>Classification</h3>
+    <p><strong>Predicted:</strong> {{ predicted_label or "Unknown" }}</p>
+    {% if confidence %}
+      <p><strong>Confidence:</strong> {{ "%.3f"|format(confidence) }}</p>
+    {% endif %}
+    {% if tumor_def %}
+      <h4>About {{ predicted_label }}</h4>
+      <p>{{ tumor_def }}</p>
+    {% endif %}
+  </div>
+
+  <div style="height:20px;"></div>
+
+  <div class="card">
+    <h3>Segmentation Overlay</h3>
+    <img src="data:image/png;base64,{{ overlay_image }}" alt="Segmentation overlay" style="max-width:100%; border:1px solid #ccc;">
+  </div>
+
+  <div style="margin-top:18px;">
+    <a href="/" class="btn">Analyze another image</a>
+  </div>
+</body>
+</html>

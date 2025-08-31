@@ -1,147 +1,282 @@
-from flask import Flask, render_template, request, redirect, url_for, session, send_file
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import transforms
-from PIL import Image
-import json
-import numpy as np
-import cv2
 import os
-from fpdf import FPDF
+import io
+import json
+import base64
 import requests
+from PIL import Image, ImageOps
+import numpy as np
+import matplotlib.pyplot as plt
+from dotenv import load_dotenv
+load_dotenv()
+
+from flask import Flask, render_template, request, redirect, url_for, flash
 
 # ---------------------------
-# 0. Config
+# Config
 # ---------------------------
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.getenv("FLASK_SECRET", "supersecretkey_for_dev")
 UPLOAD_FOLDER = "static/uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Together AI API
-TOGETHER_AI_API_KEY = os.getenv("TOGETHER_AI_API_KEY", "dummy_key")  # put in Azure secrets
-TOGETHER_AI_ENDPOINT = "https://api.together.xyz/v1/chat/completions"
-TOGETHER_AI_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+# Endpoints & keys (use environment variables in production)
+# Endpoints & keys (always set via environment variables)
+CLASSIFICATION_ENDPOINT = os.getenv("CLASSIFICATION_ENDPOINT")
+CLASSIFICATION_KEY = os.getenv("CLASSIFICATION_KEY")
 
-# GitHub Release links (replace <user>/<repo>/v1.0.0 with your release info)
-MODEL_URLS = {
-    "clf": "https://github.com/KalpanaDevi-P/bcnnunet/releases/download/v1.0.0/brain_tumor_mobilenetv2_final.h5",
-    "seg": "https://github.com/KalpanaDevi-P/bcnnunet/releases/download/v1.0.0/unet_brain_tumor_final.pth"
-}
-MODEL_PATHS = {
-    "clf": "brain_tumor_mobilenetv2_final.h5",
-    "seg": "unet_brain_tumor_final.pth"
-}
-CLASSES_PATH = "class_indices.json"
+SEGMENTATION_ENDPOINT = os.getenv("SEGMENTATION_ENDPOINT")
+SEGMENTATION_KEY = os.getenv("SEGMENTATION_KEY")
 
+# TogetherAI (optional)
+TOGETHER_AI_API_KEY = os.getenv("TOGETHER_AI_API_KEY")
+TOGETHER_AI_MODEL = os.getenv("TOGETHER_AI_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
 
-def download_model(url, path):
-    """Download model file if not already present"""
-    if not os.path.exists(path):
-        print(f"Downloading {path}...")
-        r = requests.get(url, stream=True)
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(f"Downloaded {path}")
+# HTTP headers for Azure endpoints
+def azure_headers(key):
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}"
+    }
 
+# ---------------------------
+# Utilities
+# ---------------------------
+def read_image_as_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+def pil_to_base64_png(img_pil):
+    buf = io.BytesIO()
+    img_pil.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+def overlay_mask_on_image(image_pil, mask_arr, alpha=0.5):
+    """
+    image_pil: PIL image (RGB or L)
+    mask_arr: 2D numpy array with values in [0,1] or [0,255]
+    returns PIL PNG image (RGBA) of overlay
+    """
+    if image_pil.mode != "RGB":
+        image_rgb = image_pil.convert("RGB")
+    else:
+        image_rgb = image_pil
+
+    # normalize mask to 0..255
+    if mask_arr.max() <= 1.0:
+        mask_uint8 = (mask_arr * 255).astype(np.uint8)
+    else:
+        mask_uint8 = mask_arr.astype(np.uint8)
+
+    # create colored mask (red)
+    mask_img = Image.fromarray(mask_uint8).convert("L").resize(image_rgb.size, resample=Image.NEAREST)
+    color_mask = Image.new("RGBA", image_rgb.size, (255, 0, 0, 0))
+    color_mask.putalpha(mask_img)  # alpha channel = mask
+
+    base = image_rgb.convert("RGBA")
+    overlayed = Image.alpha_composite(base, color_mask)
+    return overlayed
+
+def try_post_json_with_fallback(endpoint, key, json_payload, files_payload=None, timeout=30):
+    """
+    Try sending JSON payload first; if the endpoint returns an error indicating unsupported input,
+    try multipart/form-data upload if files_payload is provided.
+    """
+    headers = azure_headers(key)
+    try:
+        resp = requests.post(endpoint, json=json_payload, headers=headers, timeout=timeout)
+    except Exception as e:
+        return {"error": f"Request failed: {e}", "status_code": None}
+
+    # try parse json
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {"raw_text": resp.text}
+
+    # If it's successful (200..299) return
+    if resp.ok:
+        return {"response": resp_json, "status_code": resp.status_code}
+
+    # If fallback files provided, try sending multipart
+    if files_payload:
+        try:
+            # do not include json_content-type header for multipart
+            headers2 = {"Authorization": f"Bearer {key}"} if key else {}
+            resp2 = requests.post(endpoint, files=files_payload, headers=headers2, timeout=timeout)
+            try:
+                resp2_json = resp2.json()
+            except Exception:
+                resp2_json = {"raw_text": resp2.text}
+
+            if resp2.ok:
+                return {"response": resp2_json, "status_code": resp2.status_code}
+            else:
+                return {"error": "Both JSON and multipart failed", "json_response": resp_json, "multipart_response": resp2_json, "status_code": resp2.status_code}
+        except Exception as e:
+            return {"error": f"Multipart fallback failed: {e}", "status_code": None}
+
+    return {"error": "Request failed", "response": resp_json, "status_code": resp.status_code}
 
 def fetch_tumor_definition(tumor_type):
-    """Fetches a short medical description of a tumor from TogetherAI"""
+    if not TOGETHER_AI_API_KEY:
+        return ""
+    prompt = f"Give a concise medical definition of the brain tumor type: {tumor_type}. Don't mention AI."
     headers = {
         "Authorization": f"Bearer {TOGETHER_AI_API_KEY}",
         "Content-Type": "application/json"
     }
-    prompt = f"Give a concise medical definition of the brain tumor type: {tumor_type}. Dont mention anywhere as AI generated."
     data = {
         "model": TOGETHER_AI_MODEL,
         "messages": [{"role": "user", "content": prompt}]
     }
     try:
-        response = requests.post(TOGETHER_AI_ENDPOINT, headers=headers, json=data)
-        response_json = response.json()
-        if response.status_code == 200 and "choices" in response_json:
-            return response_json["choices"][0]["message"]["content"]
-        return f"No definition returned for {tumor_type}."
-    except Exception as e:
-        return f"Error fetching definition: {e}"
-
-
-# ---------------------------
-# 1. Load Classification Model
-# ---------------------------
-download_model(MODEL_URLS["clf"], MODEL_PATHS["clf"])
-clf_model = load_model(MODEL_PATHS["clf"])
-
-with open(CLASSES_PATH, "r") as f:
-    class_indices = json.load(f)
-idx_to_class = {v: k for k, v in class_indices.items()}
-
+        r = requests.post(TOGETHER_AI_ENDPOINT, json=data, headers=headers, timeout=20)
+        if r.ok:
+            js = r.json()
+            # Together AI returns choices -> message -> content (may vary)
+            return js.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        return ""
+    except Exception:
+        return ""
 
 # ---------------------------
-# 2. Define UNet Segmentation
+# Routes
 # ---------------------------
-class UNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=1):
-        super(UNet, self).__init__()
-        def CBR(in_ch, out_ch):
-            return nn.Sequential(
-                nn.Conv2d(in_ch, out_ch, 3, padding=1),
-                nn.BatchNorm2d(out_ch),
-                nn.ReLU(inplace=True)
-            )
-        self.enc1 = CBR(in_channels, 64)
-        self.enc2 = CBR(64, 128)
-        self.enc3 = CBR(128, 256)
-        self.enc4 = CBR(256, 512)
-        self.pool = nn.MaxPool2d(2)
-        self.up = nn.ConvTranspose2d(512, 256, 2, stride=2)
-        self.dec3 = CBR(512, 256)
-        self.dec2 = CBR(384, 128)
-        self.dec1 = CBR(192, 64)
-        self.out = nn.Conv2d(64, out_channels, 1)
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        if "file" not in request.files:
+            flash("No file part")
+            return redirect(request.url)
+        f = request.files["file"]
+        if f.filename == "":
+            flash("No selected file")
+            return redirect(request.url)
 
-    def forward(self, x):
-        e1 = self.enc1(x)
-        e2 = self.enc2(self.pool(e1))
-        e3 = self.enc3(self.pool(e2))
-        e4 = self.enc4(self.pool(e3))
-        d3 = self.up(e4)
-        if d3.size()[2:] != e3.size()[2:]:
-            d3 = F.interpolate(d3, size=e3.size()[2:], mode='bilinear', align_corners=False)
-        d3 = torch.cat([d3, e3], dim=1)
-        d3 = self.dec3(d3)
-        d2 = F.interpolate(d3, size=e2.size()[2:], mode='bilinear', align_corners=False)
-        d2 = torch.cat([d2, e2], dim=1)
-        d2 = self.dec2(d2)
-        d1 = F.interpolate(d2, size=e1.size()[2:], mode='bilinear', align_corners=False)
-        d1 = torch.cat([d1, e1], dim=1)
-        d1 = self.dec1(d1)
-        out = torch.sigmoid(self.out(d1))
-        return out
+        # Save uploaded file
+        filename = f"{int(__import__('time').time())}_{f.filename}"
+        safe_path = os.path.join(UPLOAD_FOLDER, filename)
+        f.save(safe_path)
+
+        # encode to base64 for sending to endpoints
+        img_b64 = read_image_as_base64(safe_path)
+        json_payload = {"image": img_b64}
+
+        # Classification
+        clf = try_post_json_with_fallback(
+            CLASSIFICATION_ENDPOINT,
+            CLASSIFICATION_KEY,
+            json_payload,
+            files_payload={"file": open(safe_path, "rb")}
+        )
+
+        if "error" in clf and not clf.get("response"):
+            # show error but continue to try segmentation
+            flash(f"Classification error: {clf.get('error')}")
+            clf_result = {}
+        else:
+            clf_result = clf.get("response", {})
+
+        # Segmentation
+        seg = try_post_json_with_fallback(
+            SEGMENTATION_ENDPOINT,
+            SEGMENTATION_KEY,
+            json_payload,
+            files_payload={"file": open(safe_path, "rb")}
+        )
+
+        if "error" in seg and not seg.get("response"):
+            flash(f"Segmentation error: {seg.get('error')}")
+            seg_result = {}
+        else:
+            seg_result = seg.get("response", {})
+
+        # Attempt to parse classification: support multiple shapes
+        predicted_label = None
+        confidence = None
+        # common responses: {"prediction": "glioma", "confidence": 0.93} or {"label": "glioma"} or {"predictions": [...]}
+        if isinstance(clf_result, dict):
+            predicted_label = clf_result.get("prediction") or clf_result.get("label") or clf_result.get("predicted_label")
+            confidence = clf_result.get("confidence") or clf_result.get("score") or clf_result.get("probability")
+
+            # Some classification implementations return {"outputs": [{"label":..., "confidence":...}]}
+            if predicted_label is None and "outputs" in clf_result and isinstance(clf_result["outputs"], list) and clf_result["outputs"]:
+                predicted_label = clf_result["outputs"][0].get("label")
+                confidence = clf_result["outputs"][0].get("confidence")
+
+        # Parse segmentation mask:
+        mask_image_b64 = None
+        mask_array = None
+
+        if isinstance(seg_result, dict):
+            # if endpoint returned base64 PNG mask
+            if "mask" in seg_result and isinstance(seg_result["mask"], str):
+                try:
+                    mask_bytes = base64.b64decode(seg_result["mask"])
+                    mask_pil = Image.open(io.BytesIO(mask_bytes)).convert("L")
+                    overlay = overlay_mask_on_image(Image.open(safe_path).convert("RGB"), np.array(mask_pil)/255.0)
+                    mask_image_b64 = pil_to_base64_png(overlay)
+                except Exception:
+                    # maybe mask was returned as list or array
+                    pass
+
+            # if endpoint returned numeric mask array
+            elif "mask" in seg_result and isinstance(seg_result["mask"], list):
+                try:
+                    arr = np.array(seg_result["mask"])
+                    # arr may have shape (1,H,W) or (H,W)
+                    if arr.ndim == 3 and arr.shape[0] == 1:
+                        arr = arr[0]
+                    # normalize to 0..1
+                    if arr.max() > 1:
+                        arr = arr / 255.0
+                    overlay = overlay_mask_on_image(Image.open(safe_path).convert("RGB"), arr)
+                    mask_image_b64 = pil_to_base64_png(overlay)
+                except Exception:
+                    pass
+
+            # if endpoint returned {"mask_base64": "..."} or {"mask_png": "..."}
+            elif "mask_base64" in seg_result:
+                try:
+                    mask_bytes = base64.b64decode(seg_result["mask_base64"])
+                    mask_pil = Image.open(io.BytesIO(mask_bytes)).convert("RGBA")
+                    mask_image_b64 = pil_to_base64_png(mask_pil)
+                except Exception:
+                    pass
+
+        # fallback: if segmentation failed, create placeholder overlay (original image)
+        if mask_image_b64 is None:
+            # just send original image as base64 for preview
+            mask_image_b64 = read_image_as_base64(safe_path)
+
+        # Tumor definition via TogetherAI (optional)
+        tumor_def = ""
+        if predicted_label:
+            tumor_def = fetch_tumor_definition(predicted_label)
+
+        return render_template(
+            "result.html",
+            filename=filename,
+            predicted_label=predicted_label,
+            confidence=confidence,
+            tumor_def=tumor_def,
+            overlay_image=mask_image_b64
+        )
+
+    return render_template("index.html")
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-download_model(MODEL_URLS["seg"], MODEL_PATHS["seg"])
-seg_model = UNet().to(device)
-seg_model.load_state_dict(torch.load(MODEL_PATHS["seg"], map_location=device))
-seg_model.eval()
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    return redirect(url_for('static', filename=f"uploads/{filename}"), code=301)
 
-img_transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5])
-])
 
-# ---------------------------
-# 3. Routes (unchanged from your code)
-# ---------------------------
-# keep your upload(), classification(), segmentation(), download_report() exactly same
-# ---------------------------
+# Simple health route
+@app.route("/health")
+def health():
+    return {"status": "ok"}
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # production server (gunicorn) will be used in App Service; debug only when running locally
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)

@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Brain Tumor Analyzer</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; }
+    .center { text-align:center; }
+    .uploader { border: 2px dashed #ccc; padding: 18px; border-radius:8px; }
+    .btn { padding: 8px 14px; border-radius:6px; background:#0078d4; color:white; border:none; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <h1 class="center">Brain Tumor Analyzer</h1>
+  <div class="uploader">
+    <form method="POST" enctype="multipart/form-data">
+      <label>Upload MRI image (jpg/png):</label><br/><br/>
+      <input type="file" name="file" accept="image/*" required><br/><br/>
+      <button class="btn" type="submit">Analyze</button>
+    </form>
+  </div>
+
+  <footer style="margin-top:20px; color:#666;">
+    <small>Frontend calls remote Azure ML endpoints for classification & segmentation.</small>
+  </footer>
+</body>
+</html>

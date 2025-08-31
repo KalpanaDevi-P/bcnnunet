@@ -1,5 +1,0 @@
-*.h5
-*.pth
-__pycache__/
-*.pyc
-static/uploads/*

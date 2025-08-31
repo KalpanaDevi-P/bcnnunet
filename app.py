@@ -279,4 +279,4 @@ def health():
 
 if __name__ == "__main__":
     # production server (gunicorn) will be used in App Service; debug only when running locally
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8000)), debug=False)
